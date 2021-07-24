@@ -1,10 +1,5 @@
 from functools import lru_cache
-from typing import List
-
-#from plover.stroke import Stroke
-
-from .library import lookup_s, rtfcre_to_skeys
-#, reverse_dictionary
+from typing import List, Tuple, Optional
 
 
 
@@ -26,11 +21,8 @@ else:
 		get_instance().close(window_name)
 
 
-MAX_STROKES=6
+disambiguation_stroke: str="R-RPB"
 
-@lru_cache(maxsize=60)
-def lookup_cached(rtfcre: str)->List[str]:
-	return lookup_s(rtfcre_to_skeys(rtfcre))
 
 class Main:
 	def __init__(self, engine)->None:
@@ -43,24 +35,41 @@ class Main:
 	def _on_translated(self, _old, _new)->None:
 		#Stroke(steno_keys).rtfcre
 		translations=self._engine.translator_state.translations
-		strokes=[stroke
+		dictionaries=self._engine.dictionaries
+		longest_key: int=dictionaries.longest_key
+		if longest_key==0: return
+
+		strokes: Tuple[str, ...]=tuple(stroke
 				for translation in translations
 				for stroke in translation.rtfcre
-				][-MAX_STROKES:]
-		write("============\n")
-		for i in range(len(strokes)):
-			lookup_result=lookup_cached("/".join(strokes[i:]))
+				)[-longest_key:]
+		if strokes[-1]==disambiguation_stroke:
+			return
 
-			if lookup_result:
-				write(f":: {len(strokes)-i} last stroke(s):\n")
-			for word in lookup_result[:15]:
-				outlines=self._engine.dictionaries.reverse_lookup(word)
-				outlines=[
-						"/".join(outline)
-						for outline in outlines]
-				write(f">>> {word} : {' | '.join(outlines)}\n")
-			if lookup_result:
-				write("\n")
+		anything_written=False
+		for i in range(len(strokes)):
+			outline_original: Tuple[str, ...]=strokes[i:]
+			outline=outline_original
+			i_written=False
+			for pad in range(1, longest_key-len(outline_original)+1):
+				outline+=(disambiguation_stroke,)
+				word: Optional[str]=dictionaries.lookup(outline)
+				if word is None: break
+				if not i_written:
+					i_written=True
+					write(f":: {len(outline_original)} last stroke(s):\n")
+				outlines: List[Tuple[str, ...]]=dictionaries.reverse_lookup(word)
+				outlines_=[
+						"/".join(outline_)
+						for outline_ in outlines
+						if outline_[-1]!=disambiguation_stroke
+						and len(outline_)<=len(outline)
+						]
+				comment=f"also {' | '.join(outlines_)}" if outlines_ else f"no alternatives"
+				write(f"  + pad {pad}: {word} ({comment})\n")
+				anything_written=True
+		if anything_written:
+			write("\n")
 
 
 	def stop(self)->None:
